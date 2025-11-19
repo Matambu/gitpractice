@@ -1,0 +1,73 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = "eu-west-2"
+        ECR_REPO = "741448947432.dkr.ecr.eu-west-2.amazonaws.com/webapp"
+        IMAGE_TAG = "latest"
+    }
+
+    stages {
+
+        stage('Checkout from GitHub') {
+            steps {
+                git branch: 'master', url: 'https://github.com/Matambu/gitpractice.git'
+            }
+        }
+
+        stage('Login to AWS ECR') {
+            steps {
+                withCredentials([aws(accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY',
+                                     credentialsId: 'aws-creds')]) {
+
+                    sh """
+                    aws --version
+                    aws configure set default.region ${AWS_REGION}
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                      | docker login --username AWS --password-stdin ${ECR_REPO}
+                    """
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                docker build -t webapp:${IMAGE_TAG} .
+                """
+            }
+        }
+
+        stage('Tag Image for ECR') {
+            steps {
+                sh """
+                docker tag webapp:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                sh """
+                docker push ${ECR_REPO}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Deploy on EC2') {
+            steps {
+                sh """
+                # Stop and remove existing container
+                docker rm -f webapp || true
+
+                # Pull latest image from ECR
+                docker pull ${ECR_REPO}:${IMAGE_TAG}
+
+                # Run container on port 8080->
+                docker run -d --name webapp -p 8080:8080 ${ECR_REPO}:${IMAGE_TAG}
+                """
+            }
+        }
+    }
+}
